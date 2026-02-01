@@ -1,0 +1,19 @@
+# Minimal ignores: caches, virtual envs, editor settings, and sensitive files
+__pycache__/
+*.py[cod]
+
+# Virtual environment and env files
+.venv/
+venv/
+.env
+
+# Test cache
+.pytest_cache/
+
+# Editor settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
