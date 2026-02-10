@@ -3,7 +3,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Single RNG for reproducible sampling within this module.
 rng = np.random.default_rng()
 
 # 8-connected grid offsets for directions 0..7.
@@ -12,17 +11,17 @@ STEP_Y = np.array([0, -1, -1, -1, 0, 1, 1, 1], dtype=int)
 
 
 def phi_linear(pheromone, phi_max=255.0, saturation=10.0):
-    """Map pheromone to intensity with linear ramp then saturation."""
+    """Map pheromone to intensity with linear ramp, then saturation."""
     if pheromone <= 0:
         return 0.0
     if pheromone >= saturation:
         return float(phi_max)
-    # Scale proportionally within the linear regime.
+    # Scale proportionally within the linear range.
     return float(phi_max) * (float(pheromone) / float(saturation))
 
 
 def choose_follower_direction(x, y, direction, pheromone, turn_kernel, eps=1e-9):
-    """Select a follower direction using forward/left/right pheromone cues."""
+    """Select a follower direction for forks."""
     n = pheromone.shape[0]
 
     forward_dir = direction
@@ -45,7 +44,7 @@ def choose_follower_direction(x, y, direction, pheromone, turn_kernel, eps=1e-9)
     if pher_forward > 0:
         return forward_dir
 
-    # If left and right are tied, sample a kernel turn to break the tie.
+    # If left and right are tied, pick a random turn.
     if abs(pher_left - pher_right) <= eps:
         turn = build_turn_kernel(turn_kernel)
         return (direction + int(turn)) & 7
@@ -53,7 +52,7 @@ def choose_follower_direction(x, y, direction, pheromone, turn_kernel, eps=1e-9)
 
 
 def sense_forward_left_right(x, y, direction, pheromone):
-    """Read pheromone in the forward/left/right cells with bounds checks."""
+    """Read pheromone in the forward/left/right cells."""
     n = pheromone.shape[0]
     forward_dir = direction
     left_dir = (direction + 1) & 7
@@ -70,33 +69,33 @@ def sense_forward_left_right(x, y, direction, pheromone):
     return float(pher_forward), float(pher_left), float(pher_right)
 
 def build_turn_kernel(turn_kernel):
-    """Sample a discrete turn from kernel B probabilities."""
+    """Determine the probabilities of the 8 possible turns."""
     B1, B2, B3, B4 = turn_kernel
     p0 = 1.0 - (B1 + B2 + B3 + B4)
     assert p0 >= 0
 
-    # Probability mass for relative turns [0, +1, -1, +2, -2, +3, -3, 4].
+    # Probability for left/right turns is split evenly.
     p = np.array([p0, B1 / 2, B1 / 2, B2 / 2, B2 / 2, B3 / 2, B3 / 2, B4], dtype=float)
     p /= p.sum()
 
+    # Possible turns, based on direction and number of 45-degree steps.
     turns = np.array([0, 1, -1, 2, -2, 3, -3, 4], dtype=int)
-    # Sample a turn using the kernel weights.
     return int(rng.choice(turns, p=p))
 
 class Ant:
-    """Single ant state: position, heading, and follower status."""
+    """Single ant state: position, direction, and follower status."""
 
     def __init__(self, x, y, direction):
-        """Initialize a new ant at (x, y) with a heading direction."""
+        """Initialize a new ant at (x, y) with a direction."""
         self.x = int(x)
         self.y = int(y)
-        # Mask to 0..7 to stay within the 8-direction encoding.
+        # 0..7 to stay within the 8-direction encoding.
         self.direction = int(direction) & 7
         self.is_follower = False
         self.follow_run_length = 0
 
     def choose_direction(self, turn_kernel, pheromone=None, alpha=0.6, cap=10.0):
-        """Choose a new direction from the kernel (optionally pheromone-weighted)."""
+        """Choose a new direction from the kernel."""
         B1, B2, B3, B4 = turn_kernel
         p0 = 1.0 - (B1 + B2 + B3 + B4)
         assert p0 >= 0
@@ -105,14 +104,15 @@ class Ant:
         p = np.array([p0, B1 / 2, B1 / 2, B2 / 2, B2 / 2, B3 / 2, B3 / 2, B4], dtype=float)
         p /= p.sum()
 
-        # Without pheromone, sample directly from the kernel.
+        # Without pheromone, choose randomly.
         if pheromone is None:
             turn = int(rng.choice(turns, p=p))
             self.direction = (self.direction + turn) & 7
             return
 
         n = pheromone.shape[0]
-        # Start from kernel probabilities and reweight by local pheromone.
+        
+        # Next step: Start from kernel probabilities and reweight based on pheromone.
         w = p.copy()
 
         for i, turn_i in enumerate(turns):
@@ -129,9 +129,10 @@ class Ant:
             if c_val > cap:
                 c_val = cap
 
-            # Exponentiate to bias toward higher pheromone cells.
+            # More bias toward higher pheromone cells.
             w[i] *= np.exp(alpha * c_val)
 
+        # Normalize to get probabilities and get a turn.
         w /= w.sum()
         turn = int(rng.choice(turns, p=w))
         self.direction = (self.direction + turn) & 7
@@ -147,10 +148,10 @@ class Ant:
 
 
 class Simulation:
-    """Ant simulation with pheromone trails."""
-
+    """Ant simulation logic."""
+    # Lower default for speed for testing, but overridden in main.
     def __init__(self, grid_size=256, steps=100, max_ants=500, release_rate=1, nest=(128, 128)):
-        """Configure a simulation instance with grid and release parameters."""
+        """Configure a simulation with grid and release parameters."""
         self.grid_size = int(grid_size)
         self.steps = int(steps)
         self.max_ants = int(max_ants)
@@ -160,7 +161,7 @@ class Simulation:
         self.ants = []
         self.total_released = 0
 
-        # Turning kernel and pheromone dynamics.
+        # Turning kernel and pheromone parameters.
         self.turn_kernel = (0.360, 0.047, 0.008, 0.004)
 
         self.pheromone = np.zeros((self.grid_size, self.grid_size), dtype=float)
@@ -191,7 +192,7 @@ class Simulation:
         if self.total_released >= self.max_ants:
             return
 
-        # Release up to the configured rate without exceeding the max.
+        # Release up to the max number of ants.
         to_release = min(self.release_rate, self.max_ants - self.total_released)
         x0, y0 = self.nest
 
@@ -235,7 +236,7 @@ class Simulation:
                     a.is_follower = True
 
         for a in self.ants:
-            # Followers use the fork rule, explorers sample the kernel.
+            # Followers use the fork rule, explorers use the kernel.
             if a.is_follower:
                 a.direction = choose_follower_direction(
                     a.x, a.y, a.direction, self.pheromone, self.turn_kernel
@@ -249,7 +250,7 @@ class Simulation:
             if on_trail:
                 a.follow_run_length += 1
             elif a.follow_run_length > 0:
-                # Close out a completed follower run.
+                # End a follower run when an ant is no longer a follower.
                 self.total_follow_run_length += a.follow_run_length
                 self.total_follow_runs += 1
                 a.follow_run_length = 0
@@ -261,7 +262,7 @@ class Simulation:
         # Deposit pheromone before ants move to the next cell.
         self.deposit()
 
-        # Move ants and discard those that exit the grid.
+        # Move ants and remove those that exit the grid.
         on_grid = []
         n = self.grid_size
         for a in self.ants:
@@ -269,7 +270,7 @@ class Simulation:
             if a.in_bounds(n):
                 on_grid.append(a)
             elif a.follow_run_length > 0:
-                # Close out runs for ants that leave the grid.
+                # Close out run lengths for ants that leave the grid.
                 self.total_follow_run_length += a.follow_run_length
                 self.total_follow_runs += 1
                 a.follow_run_length = 0
@@ -279,7 +280,7 @@ class Simulation:
         self.evaporate()
 
     def run(self):
-        """Run the simulation for the configured number of steps."""
+        """Run the simulation for the number of steps."""
         for _ in range(self.steps):
             self.step()
         for a in self.ants:
@@ -327,7 +328,7 @@ def run_and_save_image():
         sim.run()
         sims.append(sim)
 
-    # Share a common color scale across all outputs.
+    # Share a common color scale across all outputs. Finds the 99.5th percentile of pheromone values
     vmax = max(float(np.percentile(sim.pheromone, 99.5)) for sim in sims)
     if vmax <= 0:
         vmax = 1.0
